@@ -1,205 +1,102 @@
-# ml_car_pipeline.py
-# A simple, end-to-end script that covers Tasks 1–11 with clear steps and comments.
+# Very simple ML pipeline for car price prediction
 
-# -----------------------------
-# Task 1: Load and explore the dataset
-# -----------------------------
 import boto3
-import numpy as np
 import pandas as pd
+import numpy as np
+import tempfile, joblib
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import GridSearchCV
-import joblib
-import tempfile
 
-import seaborn as sns
-import matplotlib.pyplot as plt
+# -----------------------------
+# Task 1: Load dataset from S3
+# -----------------------------
+bucket_name = "car-data123456"   # replace with your bucket name
+folder = "car_cleaned_data"
+file = "car_cleaned_data.csv"
+s3_path = f"s3://{bucket_name}/{folder}/{file}"
 
-# Configure your S3 bucket/folder/file
-bucket_name = "car-data123456"  # replace 123456 with your random integers
-folder_name = "car_cleaned_data"
-file_name = "car_cleaned_data.csv"
-
-# Build S3 URI
-s3_uri = f"s3://{bucket_name}/{folder_name}/{file_name}"
-print(f"Reading dataset from: {s3_uri}")
-
-# Read CSV directly via pandas (pandas can read s3:// if environment has s3fs; if not, use boto3 to download)
-try:
-    df = pd.read_csv(s3_uri)
-except Exception as e:
-    # Fallback: use boto3 to download then read
-    print("Direct s3 read failed, using boto3 fallback...", e)
-    s3 = boto3.client("s3")
-    with tempfile.TemporaryFile() as tmp:
-        s3.download_fileobj(bucket_name, f"{folder_name}/{file_name}", tmp)
-        tmp.seek(0)
-        df = pd.read_csv(tmp)
-
-print("Preview:")
-print(df.head())
-print("\nBasic info:")
-print(df.info())
-print("\nDescribe numeric columns:")
-print(df.describe())
+df = pd.read_csv(s3_path)   # load into pandas
+print(df.head())            # see first rows
 
 # -----------------------------
 # Task 2: Feature engineering
 # -----------------------------
-# Create new feature: car_age = 2024 - year
-if "year" in df.columns:
-    df["car_age"] = 2024 - df["year"]
-else:
-    raise ValueError("Column 'year' not found. Ensure your dataset has a 'year' column.")
-
-# Drop 'car name' and 'year' if they exist
-for col_to_drop in ["car name", "year"]:
-    if col_to_drop in df.columns:
-        df = df.drop(columns=[col_to_drop])
-
-print("\nColumns after feature engineering:")
-print(df.columns.tolist())
+df["car_age"] = 2024 - df["year"]   # new column
+df = df.drop(columns=["car name","year"])  # drop unwanted
 
 # -----------------------------
-# Task 3: Define features and target variable
+# Task 3: Features and target
 # -----------------------------
-# Target is selling price; features are all other columns
-if "selling_price" not in df.columns:
-    raise ValueError("Column 'selling_price' not found. Ensure your dataset has a 'selling_price' column.")
-
-X = df.drop(columns=["selling_price"])
-y = df["selling_price"]
+X = df.drop(columns=["selling_price"])   # inputs
+y = df["selling_price"]                  # target
 
 # -----------------------------
-# Task 4: Preprocess the data
+# Task 4: Preprocess data
 # -----------------------------
-# Identify numeric and categorical features
-numeric_features = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
-categorical_features = X.select_dtypes(include=["object"]).columns.tolist()
-
-print("\nNumeric features:", numeric_features)
-print("Categorical features:", categorical_features)
-
-# Apply log transformation to km_driven (feature) and selling_price (target) to reduce skewness
-# Adjust the column names to your dataset. If your dataset uses a different name (e.g., 'km_driven'),
-# change 'km_driven' below accordingly.
-for col in ["km_driven"]:
-    if col in X.columns:
-        X[col] = np.log1p(X[col])
-
-# Log-transform the target
+# log transform to reduce skew
+X["km_driven"] = np.log1p(X["km_driven"])
 y_log = np.log1p(y)
 
-# StandardScaler for numeric, OneHotEncoder for categorical
-preprocessor = ColumnTransformer(
-    transformers=[
-        ("num", StandardScaler(), numeric_features),
-        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
-    ]
-)
+# numeric + categorical columns
+num_cols = X.select_dtypes(include=["int64","float64"]).columns
+cat_cols = X.select_dtypes(include=["object"]).columns
+
+preprocessor = ColumnTransformer([
+    ("num", StandardScaler(), num_cols),
+    ("cat", OneHotEncoder(handle_unknown="ignore"), cat_cols)
+])
 
 # -----------------------------
-# Task 5: Build a transformer pipeline
+# Task 5 + 6: Pipeline + split
 # -----------------------------
-# We already created 'preprocessor' above (ColumnTransformer).
-# It standardizes numeric features and encodes categorical features.
+model = Pipeline([
+    ("preprocessor", preprocessor),
+    ("rf", RandomForestRegressor(random_state=8))
+])
 
-# -----------------------------
-# Task 6: Build a model pipeline and split the data
-# -----------------------------
-# RandomForestRegressor with random_state=8
-model = Pipeline(
-    steps=[
-        ("preprocessor", preprocessor),
-        ("model", RandomForestRegressor(random_state=8)),
-    ]
-)
-
-# Split data (20% test, random_state=8)
-X_train, X_test, y_train_log, y_test_log = train_test_split(X, y_log, test_size=0.2, random_state=8)
-
-print("\nTrain/Test shapes:")
-print("X_train:", X_train.shape, "X_test:", X_test.shape)
+X_train, X_test, y_train, y_test = train_test_split(X, y_log, test_size=0.2, random_state=8)
 
 # -----------------------------
 # Task 7: Hyperparameter tuning
 # -----------------------------
-# Use pipeline parameter names with step prefixes: model__param
 param_grid = {
-    "model__n_estimators": [100, 200, 300],
-    "model__max_depth": [None, 10, 20, 30],
-    "model__min_samples_split": [2, 5, 10],
+    "rf__n_estimators": [100,200],
+    "rf__max_depth": [None,10],
+    "rf__min_samples_split": [2,5]
 }
+grid = GridSearchCV(model, param_grid, cv=3, scoring="r2")
+grid.fit(X_train, y_train)
 
-grid_search = GridSearchCV(
-    estimator=model,
-    param_grid=param_grid,
-    cv=5,            # cross-validation folds
-    scoring="r2",    # regression metric
-    n_jobs=1,        # keep simple
-    verbose=1
-)
+best_model = grid.best_estimator_
+print("Best params:", grid.best_params_)
 
 # -----------------------------
-# Task 8: Train the model (grid search)
-# -----------------------------
-print("\nFitting GridSearchCV (this may take a few minutes)...")
-grid_search.fit(X_train, y_train_log)
-
-best_model = grid_search.best_estimator_
-print("\nBest params:", grid_search.best_params_)
-
-# -----------------------------
-# Task 9: Make predictions (and reverse log)
+# Task 8 + 9: Train + predict
 # -----------------------------
 y_pred_log = best_model.predict(X_test)
-
-# Reverse log transform to original scale using expm1
-y_test = np.expm1(y_test_log)
-y_pred = np.expm1(y_pred_log)
+y_pred = np.expm1(y_pred_log)   # reverse log
+y_true = np.expm1(y_test)
 
 # -----------------------------
-# Task 10: Evaluate the model
+# Task 10: Evaluate
 # -----------------------------
-mae = mean_absolute_error(y_test, y_pred)
-mse = mean_squared_error(y_test, y_pred)
-rmse = np.sqrt(mse)
-r2 = r2_score(y_test, y_pred)
-
-print("\nEvaluation metrics:")
-print(f"MAE:  {mae:.3f}")
-print(f"MSE:  {mse:.3f}")
-print(f"RMSE: {rmse:.3f}")
-print(f"R2:   {r2:.3f}")
-print("Best hyperparameters:", grid_search.best_params_)
-
-# Optional: quick residual plot
-plt.figure(figsize=(6,4))
-sns.scatterplot(x=y_test, y=y_pred)
-plt.xlabel("Actual selling_price")
-plt.ylabel("Predicted selling_price")
-plt.title("Predicted vs Actual")
-plt.show()
+print("MAE:", mean_absolute_error(y_true,y_pred))
+print("MSE:", mean_squared_error(y_true,y_pred))
+print("RMSE:", np.sqrt(mean_squared_error(y_true,y_pred)))
+print("R2:", r2_score(y_true,y_pred))
 
 # -----------------------------
-# Task 11: Saving the model to AWS S3
+# Task 11: Save model to S3
 # -----------------------------
-# Serialize the trained GridSearchCV (or best_model) and upload to S3
-s3_client = boto3.client("s3")
-
-# As per instruction, save to bucket named 'car-data' and filename 'grid_search.pkl'
-target_bucket = "car-data"
-target_key = "grid_search.pkl"
-
+s3 = boto3.client("s3")
 with tempfile.TemporaryFile() as tmp:
-    joblib.dump(grid_search, tmp)  # save full grid search (includes best estimator)
+    joblib.dump(best_model, tmp)
     tmp.seek(0)
-    s3_client.put_object(Bucket=target_bucket, Key=target_key, Body=tmp.read())
+    s3.put_object(Bucket="car-data", Key="grid_search.pkl", Body=tmp.read())
 
-print(f"\n✅ Successfully uploaded model to s3://{target_bucket}/{target_key}")
+print("✅ Model saved to S3: car-data/grid_search.pkl")
