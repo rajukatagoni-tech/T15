@@ -1,0 +1,36 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when
+
+# Create Spark session
+spark = SparkSession.builder.appName("PriceCategoryExample").getOrCreate()
+
+# Sample data
+data = [
+    ("carA", 3000),
+    ("carB", 10000),
+    ("carC", 25000)
+]
+columns = ["car_name", "selling_price"]
+
+df = spark.createDataFrame(data, columns)
+
+# -----------------------------
+# Categorize car prices
+# -----------------------------
+# Mathematics:
+# price_category =
+#   "cheap"   if price < 5000
+#   "average" if 5000 ≤ price < 20000
+#   "luxury"  otherwise
+
+df = df.withColumn(
+    "price_category",
+    when(col("selling_price") < 5000, "cheap")
+    .when((col("selling_price") >= 5000) & (col("selling_price") < 20000), "average")
+    .otherwise("luxury")
+)
+
+# Show result
+df.show()
+
+spark.stop()

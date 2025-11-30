@@ -1,0 +1,78 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, avg, count
+
+# -----------------------------
+# Task 1: Read Data
+# -----------------------------
+def read_data(spark):
+    bucket_name = "your-bucket-name"   # <-- replace with your actual S3 bucket
+    input_path = f"s3://{bucket_name}/inputfile/"
+
+    df = spark.read.csv(input_path, header=True)
+    return df
+
+
+# -----------------------------
+# Task 2: Clean Data
+# -----------------------------
+def clean_data(input_df):
+    df = input_df.dropna().dropDuplicates()
+    return df
+
+
+# -----------------------------
+# Task 3: Load Data to S3
+# -----------------------------
+def S3_load_data(data, file_name):
+    bucket_name = "your-bucket-name"   # <-- replace with your actual S3 bucket
+    output_path = f"s3://{bucket_name}/{file_name}/"
+
+    data.coalesce(1).write.csv(output_path, header=True, mode="overwrite")
+
+
+# -----------------------------
+# Task 4: Result 1
+# -----------------------------
+def result_1(input_df):
+    df = input_df.groupBy("car_name").agg(
+        avg("selling_price").alias("average_selling_price"),
+        count("*").alias("car_count")
+    ).filter(col("car_count") > 2)
+
+    return df
+
+
+# -----------------------------
+# Task 5: Result 2
+# -----------------------------
+def result_2(input_df):
+    df = input_df.withColumn(
+        "price_per_km",
+        col("selling_price") / col("km_driven")
+    ).filter(col("price_per_km") < 10)
+
+    return df
+
+
+# -----------------------------
+# Main Execution
+# -----------------------------
+if __name__ == "__main__":
+    # Create Spark session
+    spark = SparkSession.builder.appName("CarDataETL").getOrCreate()
+
+    # Task 1: Read
+    raw_df = read_data(spark)
+
+    # Task 2: Clean
+    clean_df = clean_data(raw_df)
+
+    # Task 4: Result 1
+    result1_df = result_1(clean_df)
+    S3_load_data(result1_df, "result_1")
+
+    # Task 5: Result 2
+    result2_df = result_2(clean_df)
+    S3_load_data(result2_df, "result_2")
+
+    spark.stop()

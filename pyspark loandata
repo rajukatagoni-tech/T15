@@ -1,0 +1,123 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, round, sum as _sum, count
+
+# -----------------------------
+# Task 1: Read Data
+# -----------------------------
+def read_data(spark, customSchema):
+    bucket_name = "your-bucket-name"  # Replace with your actual S3 bucket
+    input_path = f"s3://{bucket_name}/inputfile/"
+
+    df = spark.read.csv(input_path, header=True, schema=customSchema)
+    return df
+
+
+# -----------------------------
+# Task 2: Clean Data
+# -----------------------------
+def clean_data(input_df):
+    df = input_df.dropna().dropDuplicates()
+    df = df.filter(col("purpose") != "null")
+    return df
+
+
+# -----------------------------
+# Task 3: Load Data to S3
+# -----------------------------
+def S3_load_data(data, file_name):
+    bucket_name = "your-bucket-name"  # Replace with your actual S3 bucket
+    output_path = f"s3://{bucket_name}/{file_name}/"
+
+    data.coalesce(1).write.csv(output_path, header=True, mode="overwrite")
+
+
+# -----------------------------
+# Task 4: Result 1
+# -----------------------------
+def result_1(input_df):
+    df = input_df.filter(
+        (col("purpose") == "educational") | (col("purpose") == "small_business")
+    )
+
+    df = df.withColumn(
+        "income_to_installment_ratio",
+        col("log_annual_inc") / col("installment")
+    )
+
+    df = df.withColumn(
+        "int_rate_category",
+        when(col("int_rate") < 0.1, "low")
+        .when((col("int_rate") >= 0.1) & (col("int_rate") < 0.15), "medium")
+        .otherwise("high")
+    )
+
+    df = df.withColumn(
+        "high_risk_borrower",
+        when((col("dti") > 20) | (col("fico") < 700) | (col("revol_util") > 80), 1)
+        .otherwise(0)
+    )
+
+    return df
+
+
+# -----------------------------
+# Task 5: Result 2
+# -----------------------------
+def result_2(input_df):
+    df = input_df.groupBy("purpose").agg(
+        round(_sum(col("not_fully_paid")) / count("*"), 2).alias("default_rate")
+    )
+    return df
+
+
+# -----------------------------
+# Task 6: Load Data to Redshift
+# -----------------------------
+def redshift_load_data(data):
+    jdbcUrl = "jdbc:redshift://your-cluster-endpoint:5439/dev"
+    username = "awsuser"
+    password = "Awsuser1"
+    table_name = "result_2"
+
+    data.write \
+        .format("jdbc") \
+        .option("url", jdbcUrl) \
+        .option("dbtable", table_name) \
+        .option("user", username) \
+        .option("password", password) \
+        .mode("overwrite") \
+        .save()
+
+
+# -----------------------------
+# Main Execution
+# -----------------------------
+if __name__ == "__main__":
+    spark = SparkSession.builder.appName("LoanDataETL").getOrCreate()
+
+    # Define custom schema if needed
+    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
+    customSchema = StructType([
+        StructField("purpose", StringType(), True),
+        StructField("log_annual_inc", DoubleType(), True),
+        StructField("installment", DoubleType(), True),
+        StructField("int_rate", DoubleType(), True),
+        StructField("dti", DoubleType(), True),
+        StructField("fico", IntegerType(), True),
+        StructField("revol_util", DoubleType(), True),
+        StructField("not_fully_paid", IntegerType(), True)
+    ])
+
+    # Run tasks
+    raw_df = read_data(spark, customSchema)
+    clean_df = clean_data(raw_df)
+
+    result1_df = result_1(clean_df)
+    S3_load_data(result1_df, "result_1")
+
+    result2_df = result_2(clean_df)
+    S3_load_data(result2_df, "result_2")
+
+    redshift_load_data(result2_df)
+
+    spark.stop()

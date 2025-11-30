@@ -1,0 +1,99 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, avg, count, round, trim, when
+
+# Create Spark session
+spark = SparkSession.builder.appName("PySparkExamples").getOrCreate()
+
+# Sample data
+data = [
+    ("apple", 10, 2),
+    ("apple", 12, 3),
+    ("banana", 8, 1),
+    ("banana", 9, 2),
+    (" mango ", 15, 5)   # note spaces around mango
+]
+columns = ["fruit", "price", "weight"]
+
+df = spark.createDataFrame(data, columns)
+
+# -----------------------------
+# 1. groupBy()
+# -----------------------------
+# Groups rows by fruit
+grouped = df.groupBy("fruit").count()
+print("👉 groupBy example: count fruits")
+grouped.show()
+
+# -----------------------------
+# 2. agg()
+# -----------------------------
+# After grouping, calculate average price
+agg_df = df.groupBy("fruit").agg(avg("price").alias("avg_price"))
+print("👉 agg example: average price per fruit")
+agg_df.show()
+
+# -----------------------------
+# 3. round()
+# -----------------------------
+# Round price to 1 decimal place
+rounded = df.withColumn("rounded_price", round(col("price"), 1))
+print("👉 round example: round price")
+rounded.show()
+
+# -----------------------------
+# 4. trim()
+# -----------------------------
+# Remove spaces around fruit names
+trimmed = df.withColumn("clean_fruit", trim(col("fruit")))
+print("👉 trim example: remove spaces")
+trimmed.show()
+
+# -----------------------------
+# 5. withColumn()
+# -----------------------------
+# Create new column double_price
+new_col = df.withColumn("double_price", col("price") * 2)
+print("👉 withColumn example: double price")
+new_col.show()
+
+# -----------------------------
+# 6. when() / otherwise()
+# -----------------------------
+# Categorize price as cheap or expensive
+category = df.withColumn("price_category",
+    when(col("price") < 10, "cheap").otherwise("expensive")
+)
+print("👉 when/otherwise example: price category")
+category.show()
+
+# -----------------------------
+# 7. filter()
+# -----------------------------
+# Keep only apples
+filtered = df.filter(col("fruit") == "apple")
+print("👉 filter example: only apples")
+filtered.show()
+
+# -----------------------------
+# 8. dropna()
+# -----------------------------
+# Removes rows with null values (not shown here, but works if nulls exist)
+print("👉 dropna example: removes rows with nulls")
+df.dropna().show()
+
+# -----------------------------
+# 9. dropDuplicates()
+# -----------------------------
+# Removes duplicate rows
+print("👉 dropDuplicates example: removes duplicate rows")
+df.dropDuplicates().show()
+
+# -----------------------------
+# 10. Division
+# -----------------------------
+# Calculate price per kg
+division = df.withColumn("price_per_kg", col("price") / col("weight"))
+print("👉 division example: price per kg")
+division.show()
+
+spark.stop()
