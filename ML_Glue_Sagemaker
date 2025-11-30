@@ -1,0 +1,140 @@
+# -----------------------------
+# Task 1: Setting Up AWS Resources
+# -----------------------------
+import boto3
+import sagemaker
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import tempfile
+import joblib
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+import numpy as np
+
+# AWS setup
+session = boto3.Session()
+s3_client = session.client('s3')
+bucket_name = "employee-data"
+
+# SageMaker role
+role = sagemaker.get_execution_role()
+
+# -----------------------------
+# Task 2: Loading and Preprocessing Data
+# -----------------------------
+# Build S3 path
+file_key = "inputfiles/employee_cleaned_data.csv"
+s3_path = f"s3://{bucket_name}/{file_key}"
+
+# Load dataset
+df = pd.read_csv(s3_path)
+
+# Remove unique identifier
+if "employee_id" in df.columns:
+    df = df.drop("employee_id", axis=1)
+
+# Extract numeric values from 'region' column
+df["region"] = df["region"].str.extract("(\d+)").astype(float)
+
+# -----------------------------
+# Task 3: Data Analysis and Visualization
+# -----------------------------
+# Check duplicates
+print("Duplicate records:", df.duplicated().sum())
+print("Shape after cleaning:", df.shape)
+
+# Pie chart for gender
+df["gender"].value_counts().plot.pie(autopct="%1.1f%%", figsize=(6,6))
+plt.title("Gender Distribution")
+plt.show()
+
+# Count plot for education by gender
+plt.figure(figsize=(8,6))
+sns.countplot(data=df, x="education", hue="gender")
+plt.title("Education by Gender")
+plt.show()
+
+# -----------------------------
+# Task 4: Feature Engineering
+# -----------------------------
+# Split independent (X) and dependent (y)
+X = df.drop("awards_won", axis=1)   # Example: target column is 'awards_won'
+y = df["awards_won"]
+
+# Preprocess categorical columns
+categorical_cols = X.select_dtypes(include=["object"]).columns
+numeric_cols = X.select_dtypes(include=["int64","float64"]).columns
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+        ("num", "passthrough", numeric_cols)
+    ]
+)
+
+X_transformed = preprocessor.fit_transform(X)
+
+# Feature selection (top 5 features)
+selector = SelectKBest(score_func=f_regression, k=5)
+X_selected = selector.fit_transform(X_transformed, y)
+
+print("Selected feature shape:", X_selected.shape)
+
+# -----------------------------
+# Task 5: Creating the Model
+# -----------------------------
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X_selected, y, test_size=0.2, random_state=0)
+
+# Feature scaling
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+# Logistic Regression model
+model = LogisticRegression(random_state=0)
+model.fit(X_train, y_train)
+
+# Predictions
+y_pred = model.predict(X_test)
+
+# Metrics
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("Precision:", precision_score(y_test, y_pred))
+print("Recall:", recall_score(y_test, y_pred))
+print("F1 Score:", f1_score(y_test, y_pred))
+
+# Confusion matrix heatmap
+cm = confusion_matrix(y_test, y_pred)
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+plt.title("Confusion Matrix")
+plt.show()
+
+# -----------------------------
+# Task 6: Deploying the Model
+# -----------------------------
+with tempfile.TemporaryFile() as tmp:
+    joblib.dump(model, tmp)
+    tmp.seek(0)
+    s3_client.put_object(Bucket=bucket_name, Key="ml-output/model.pkl", Body=tmp.read())
+
+print("✅ Successfully pushed data to S3: model.pkl")
+
+# -----------------------------
+# Task 7: Prediction using Deployed Model
+# -----------------------------
+# Download model from S3
+with tempfile.TemporaryFile() as tmp:
+    s3_client.download_fileobj(bucket_name, "ml-output/model.pkl", tmp)
+    tmp.seek(0)
+    loaded_model = joblib.load(tmp)
+
+# Run predictions again
+y_pred_loaded = loaded_model.predict(X_test)
+print("Accuracy with loaded model:", accuracy_score(y_test, y_pred_loaded))
