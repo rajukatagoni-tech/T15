@@ -138,3 +138,20 @@ with tempfile.TemporaryFile() as tmp:
 # Run predictions again
 y_pred_loaded = loaded_model.predict(X_test)
 print("Accuracy with loaded model:", accuracy_score(y_test, y_pred_loaded))
+
+
+
+
+Task 1: Sets up AWS session, S3 client, SageMaker role.
+
+Task 2: Loads CSV from S3, cleans columns.
+
+Task 3: Checks duplicates, plots gender pie chart + education count plot.
+
+Task 4: Preprocesses categorical/numeric columns, selects top 5 features.
+
+Task 5: Builds Logistic Regression model, evaluates metrics, plots confusion matrix.
+
+Task 6: Saves model with joblib → uploads to S3 bucket (employee-data/ml-output/model.pkl).
+
+Task 7: Downloads model from S3 → reloads → runs predictions again.
